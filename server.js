@@ -43,6 +43,22 @@ app.use((req, res) => {
 // Error handler — must be last
 app.use(errorHandler);
 
+// Recalculate trending scores every hour while the server is running
+import { createClient } from "@supabase/supabase-js";
+
+setInterval(async () => {
+  try {
+    const client = createClient(
+      process.env.SUPABASE_URL,
+      process.env.SUPABASE_SERVICE_KEY
+    );
+    const { error } = await client.rpc("recalculate_all_trending_scores");
+    if (error) console.warn("Trending score update failed:", error.message);
+    else console.log(`[${new Date().toISOString()}] Trending scores updated`);
+  } catch (err) {
+    console.warn("Trending score interval error:", err.message);
+  }
+}, 60 * 60 * 1000);
 // ── Start ───────────────────────────────────────────────────
 app.listen(PORT, () => {
   console.log(`\n🍜 Trending Eats API running on http://localhost:${PORT}\n`);
