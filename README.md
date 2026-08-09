@@ -1,4 +1,4 @@
-# Trending Eats 🍜
+# Trending Eats 
 
 A community-curated map of food spots going viral on TikTok. Every pin is backed by a real TikTok video — not padded Google reviews, but actual social proof. Find what's trending near you, watch the video, and go eat.
 
