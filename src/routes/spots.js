@@ -5,37 +5,18 @@ import { createError } from "../middleware/errorHandler.js";
 
 const router = Router();
 
-/* ───────────────────────────────
-   GET /spots
-─────────────────────────────── */
+// GET /spots
 router.get("/", async (req, res, next) => {
   try {
-    const {
-      lat,
-      lng,
-      radius_km = 10,
-      category,
-      sort = "trending",
-      limit = 20,
-      offset = 0,
-    } = req.query;
+    const { lat, lng, radius_km = 10, category, sort = "trending", limit = 20, offset = 0 } = req.query;
 
     let query = supabase
       .from("spots")
-      .select(`
-        *,
-        categories ( name, icon ),
-        profiles ( username, avatar_url )
-      `)
+      .select(`*, categories ( name, icon ), profiles ( username, avatar_url )`)
       .range(offset, offset + limit - 1);
 
     if (category) {
-      const { data: cat } = await supabase
-        .from("categories")
-        .select("id")
-        .eq("name", category)
-        .single();
-
+      const { data: cat } = await supabase.from("categories").select("id").eq("name", category).single();
       if (cat) query = query.eq("category_id", cat.id);
     }
 
@@ -52,19 +33,11 @@ router.get("/", async (req, res, next) => {
       const userLat = parseFloat(lat);
       const userLng = parseFloat(lng);
       const radiusKm = parseFloat(radius_km);
-
       const nearby = data.filter((spot) => {
-        const dist = getDistanceKm(
-          userLat,
-          userLng,
-          spot.latitude,
-          spot.longitude
-        );
-
+        const dist = getDistanceKm(userLat, userLng, spot.latitude, spot.longitude);
         spot.distance_km = Math.round(dist * 10) / 10;
         return dist <= radiusKm;
       });
-
       return res.json(nearby);
     }
 
@@ -74,161 +47,38 @@ router.get("/", async (req, res, next) => {
   }
 });
 
-/* ───────────────────────────────
-   GET /spots/:id
-─────────────────────────────── */
-router.get("/:id", async (req, res, next) => {
-  try {
-    const { data, error } = await supabase
-      .from("spots")
-      .select(`
-        *,
-        categories ( name, icon ),
-        profiles ( username, avatar_url )
-      `)
-      .eq("id", req.params.id)
-      .single();
-
-    if (error || !data) throw createError(404, "Spot not found");
-
-    res.json(data);
-  } catch (err) {
-    next(err);
-  }
-});
-
-/* ───────────────────────────────
-   POST /spots
-─────────────────────────────── */
-router.post("/", async (req, res, next) => {
-  try {
-    const {
-      name,
-      description,
-      address,
-      latitude,
-      longitude,
-      tiktok_url,
-      category_id,
-      submitted_by,
-    } = req.body;
-
-    if (!name || !latitude || !longitude || !tiktok_url) {
-      throw createError(
-        400,
-        "name, latitude, longitude, and tiktok_url are required"
-      );
-    }
-
-    const lat = parseFloat(latitude);
-    const lng = parseFloat(longitude);
-
-    if (
-      isNaN(lat) ||
-      isNaN(lng) ||
-      lat < -90 ||
-      lat > 90 ||
-      lng < -180 ||
-      lng > 180
-    ) {
-      throw createError(400, "Invalid latitude or longitude");
-    }
-
-    if (!tiktok_url.includes("tiktok.com")) {
-      throw createError(400, "tiktok_url must be a TikTok link");
-    }
-
-    let tiktok_embed = null;
-    let thumbnail = null;
-
-    try {
-      const oembed = await axios.get(
-        `https://www.tiktok.com/oembed?url=${encodeURIComponent(tiktok_url)}`,
-        { timeout: 8000 }
-      );
-
-      tiktok_embed = oembed.data.html;
-      thumbnail = oembed.data.thumbnail_url;
-    } catch (err) {
-      console.warn("TikTok oEmbed failed:", err.message);
-    }
-
-    const { data, error } = await supabase
-      .from("spots")
-      .insert([
-        {
-          name,
-          description,
-          address,
-          latitude: lat,
-          longitude: lng,
-          tiktok_url,
-          tiktok_embed,
-          thumbnail,
-          category_id: category_id || null,
-          submitted_by: submitted_by || null,
-        },
-      ])
-      .select()
-      .single();
-
-    if (error) throw error;
-
-    res.status(201).json(data);
-  } catch (err) {
-    next(err);
-  }
-});
-
-/* ───────────────────────────────
-   DELETE /spots/:id
-─────────────────────────────── */
-router.delete("/:id", async (req, res, next) => {
-  try {
-    const { error } = await supabase
-      .from("spots")
-      .delete()
-      .eq("id", req.params.id);
-
-    if (error) throw error;
-
-    res.status(204).send();
-  } catch (err) {
-    next(err);
-  }
-});
-
-/* ───────────────────────────────
-   GEOCODE
-─────────────────────────────── */
+// GET /spots/geocode — MUST be before /:id
 router.get("/geocode", async (req, res, next) => {
   try {
     const { address } = req.query;
+    if (!address) throw createError(400, "address query param required");
 
-    if (!address) {
-      throw createError(400, "address query param required");
-    }
+    const attempts = [
+      address,
+      address.replace(/^(unit|suite|apt|#)\s*\w+[,\s]*/i, "").trim(),
+      address.split(",").slice(1).join(",").trim(),
+      address.split(",").slice(-2).join(",").trim(),
+    ].filter((q) => q && q.length > 3);
 
-    const response = await axios.get(
-      "https://nominatim.openstreetmap.org/search",
-      {
-        params: {
-          q: address,
-          format: "json",
-          limit: 1,
-        },
-        headers: {
-          "User-Agent": "TrendingEatsApp/1.0",
-        },
-        timeout: 10000,
+    let result = null;
+    for (const attempt of attempts) {
+      const response = await axios.get(
+        "https://nominatim.openstreetmap.org/search",
+        {
+          params: { q: attempt, format: "json", limit: 1 },
+          headers: { "User-Agent": "TrendingEatsApp/1.0" },
+          timeout: 10000,
+        }
+      );
+      if (response.data.length > 0) {
+        result = response.data[0];
+        break;
       }
-    );
-
-    if (!response.data.length) {
-      throw createError(404, "Address not found");
     }
 
-    const result = response.data[0];
+    if (!result) {
+      throw createError(404, "Address not found — try: Restaurant Name, City");
+    }
 
     res.json({
       lat: parseFloat(result.lat),
@@ -240,20 +90,94 @@ router.get("/geocode", async (req, res, next) => {
   }
 });
 
-/* ───────────────────────────────
-   Helpers
-─────────────────────────────── */
+// GET /spots/:id
+router.get("/:id", async (req, res, next) => {
+  try {
+    const { data, error } = await supabase
+      .from("spots")
+      .select(`*, categories ( name, icon ), profiles ( username, avatar_url )`)
+      .eq("id", req.params.id)
+      .single();
+
+    if (error || !data) throw createError(404, "Spot not found");
+    res.json(data);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /spots
+router.post("/", async (req, res, next) => {
+  try {
+    const { name, description, address, latitude, longitude, tiktok_url, category_id, submitted_by } = req.body;
+
+    if (!name || !latitude || !longitude || !tiktok_url) {
+      throw createError(400, "name, latitude, longitude, and tiktok_url are required");
+    }
+
+    const lat = parseFloat(latitude);
+    const lng = parseFloat(longitude);
+    if (isNaN(lat) || isNaN(lng) || lat < -90 || lat > 90 || lng < -180 || lng > 180) {
+      throw createError(400, "Invalid latitude or longitude");
+    }
+
+    if (!tiktok_url.includes("tiktok.com")) {
+      throw createError(400, "tiktok_url must be a TikTok video link");
+    }
+
+    let tiktok_embed = null;
+    let thumbnail = null;
+    try {
+      const oembed = await axios.get(
+        `https://www.tiktok.com/oembed?url=${encodeURIComponent(tiktok_url)}`,
+        { timeout: 8000 }
+      );
+      tiktok_embed = oembed.data.html;
+      thumbnail = oembed.data.thumbnail_url;
+    } catch (oembedErr) {
+      console.warn("TikTok oEmbed failed for:", tiktok_url, oembedErr.message);
+    }
+
+    const { data, error } = await supabase
+      .from("spots")
+      .insert([{ name, description, address, latitude: lat, longitude: lng, tiktok_url, tiktok_embed, thumbnail, category_id: category_id || null, submitted_by: submitted_by || null }])
+      .select()
+      .single();
+
+    if (error) throw error;
+    res.status(201).json(data);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// DELETE /spots/:id
+router.delete("/:id", async (req, res, next) => {
+  try {
+    const { error } = await supabase.from("spots").delete().eq("id", req.params.id);
+    if (error) throw error;
+    res.status(204).send();
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /spots/:id/save
+router.post("/:id/save", async (req, res, next) => {
+  try {
+    supabase.from("spots").update({ saves_count: supabase.rpc("increment", { x: 1 }) }).eq("id", req.params.id);
+    const spot = await supabase.from("spots").select("*").eq("id", req.params.id).single();
+    res.json(spot.data);
+  } catch (err) {
+    next(err);
+  }
+});
+
 function getDistanceKm(lat1, lng1, lat2, lng2) {
   const R = 6371;
   const dLat = toRad(lat2 - lat1);
   const dLng = toRad(lng2 - lng1);
-
-  const a =
-    Math.sin(dLat / 2) ** 2 +
-    Math.cos(toRad(lat1)) *
-      Math.cos(toRad(lat2)) *
-      Math.sin(dLng / 2) ** 2;
-
+  const a = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
