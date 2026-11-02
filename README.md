@@ -2,7 +2,7 @@
 
 A community-curated map of food spots going viral on TikTok. Every pin is backed by a real TikTok video — not padded Google reviews, but actual social proof. Find what's trending near you, watch the video, and go eat.
 
-DEMO: https://drive.google.com/file/d/1ItDjP5yAVVnn6TRP8wbkDDc6sA6tytCv/view?usp=sharing
+DEMO: https://drive.google.com/file/d/1_3bKJubqB-10ycuoyYyO3yPphIl82fY8/view?usp=sharing
 ---
 
 ## What it does
