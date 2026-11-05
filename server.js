@@ -7,7 +7,6 @@ import categoriesRouter from "./src/routes/categories.js";
 import { errorHandler } from "./src/middleware/errorHandler.js";
 
 dotenv.config();
-console.log("SUPABASE_URL:", process.env.SUPABASE_URL);
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -18,7 +17,9 @@ app.use(express.json());
 
 // Log every incoming request in development
 app.use((req, res, next) => {
-  console.log(`${req.method} ${req.path}`);
+  if (process.env.NODE_ENV !== "production") {
+    console.log(`${req.method} ${req.path.replace(/[a-f0-9]{8}-[a-f0-9-]{27,}/gi, ":id")}`);
+  }
   next();
 });
 
