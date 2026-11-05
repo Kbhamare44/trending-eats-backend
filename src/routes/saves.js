@@ -4,10 +4,24 @@ import { createError } from "../middleware/errorHandler.js";
 
 const router = Router();
 
+// Legacy saves are private too; never trust a user_id supplied by the caller.
+router.use(async (req, res, next) => {
+  try {
+    const token = /^Bearer\s+(.+)$/i.exec(req.headers.authorization ?? "")?.[1];
+    if (!token) throw createError(401, "Sign in to manage saves");
+    const { data, error } = await supabase.auth.getUser(token);
+    if (error || !data.user?.email_confirmed_at) throw createError(401, "Sign in to manage saves");
+    req.authUserId = data.user.id;
+    if (req.body?.user_id && req.body.user_id !== req.authUserId) throw createError(403, "These saves belong to another account");
+    next();
+  } catch (error) { next(error); }
+});
+
 // POST /saves
 router.post("/", async (req, res, next) => {
   try {
-    const { user_id, spot_id } = req.body;
+    const { spot_id } = req.body;
+    const user_id = req.authUserId;
 
     if (!user_id || !spot_id) {
       throw createError(400, "user_id and spot_id are required");
@@ -21,7 +35,7 @@ router.post("/", async (req, res, next) => {
 
     if (error) {
       if (error.code === "23505") {
-        throw createError(409, "Already saved");
+        return res.status(200).json({ saved: true, alreadySaved: true });
       }
       throw error;
     }
@@ -35,7 +49,8 @@ router.post("/", async (req, res, next) => {
 // DELETE /saves
 router.delete("/", async (req, res, next) => {
   try {
-    const { user_id, spot_id } = req.body;
+    const { spot_id } = req.body;
+    const user_id = req.authUserId;
 
     if (!user_id || !spot_id) {
       throw createError(400, "user_id and spot_id are required");
@@ -58,6 +73,7 @@ router.delete("/", async (req, res, next) => {
 // GET /saves/user/:user_id
 router.get("/user/:user_id", async (req, res, next) => {
   try {
+    if (req.params.user_id !== req.authUserId) throw createError(403, "These saves belong to another account");
     const { data, error } = await supabase
       .from("saves")
       .select("spot_id")
